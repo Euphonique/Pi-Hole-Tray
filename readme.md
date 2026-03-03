@@ -4,11 +4,11 @@ A lightweight Windows system tray application to control your Pi-Hole ad blocker
 
 ![shield_icons](https://img.shields.io/badge/platform-Windows-blue) 
 
-<img width="154" height="35" alt="Screenshot 2026-03-03 123508" src="https://github.com/user-attachments/assets/10afb874-a6ed-4609-b7d6-23d952923432" />
+<img width="154" height="35" alt="Screenshot 2026-03-03 123508" src="https://github.com/user-attachments/assets/10afb874-a6ed-4609-b7d6-23d952923432" />  
 
-<img width="358" height="156" alt="Screenshot 2026-03-03 123644" src="https://github.com/user-attachments/assets/6d6002c7-a39f-45d0-b6e3-0ae3d8ae6857" />
+<img width="358" height="156" alt="Screenshot 2026-03-03 123644" src="https://github.com/user-attachments/assets/6d6002c7-a39f-45d0-b6e3-0ae3d8ae6857" />  
 
-<img width="319" height="277" alt="Screenshot 2026-03-03 123547" src="https://github.com/user-attachments/assets/815f5a45-af71-48e1-8995-5e0f25be75a6" />
+<img width="319" height="277" alt="Screenshot 2026-03-03 123547" src="https://github.com/user-attachments/assets/815f5a45-af71-48e1-8995-5e0f25be75a6" />  
 
 
 ## Features
