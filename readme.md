@@ -1,6 +1,6 @@
 # Pi-Hole Tray Controller
 
-A lightweight Windows system tray application to control your Pi-Hole ad blocker.
+A lightweight, unofficial Windows system tray application to control your Pi-Hole ad blocker.
 [https://github.com/pi-hole/pi-hole](https://github.com/pi-hole/pi-hole)
 
 
