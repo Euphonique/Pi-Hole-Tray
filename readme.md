@@ -22,7 +22,7 @@ A lightweight, unofficial Windows system tray application to control your Pi-Hol
 - **Right-click menu** with all options
 - **Temporarily disable** blocking: 5 min, 10 min, 30 min, 1 h, 2 h, 5 h
 - **NEW: Block-list** with filters
-- **NEW: Unblock queries** from the blocklist via context-menu, temporarly or permanent
+- **NEW: Unblock queries** from the blocklist via context-menu, temporarily or permanent
 - **Modern popup settings** — borderless, two-column layout, positioned above the tray
 - **Auto-start** with Windows
 - **Multi-language UI** — English, German, Spanish, French, Italian (auto-detected from OS)
