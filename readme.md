@@ -7,8 +7,6 @@ A lightweight, unofficial Windows system tray application to control your Pi-Hol
 
 ![shield_icons](https://img.shields.io/badge/platform-Windows-blue)<br /><br />
 
-<img width="155" height="35" alt="Screenshot 2026-03-05 202314" src="https://github.com/user-attachments/assets/c2977650-ded3-4ed6-a219-aadcaf183b26" />
-
 <img width="248" height="175" alt="Screenshot 2026-03-05 202400" src="https://github.com/user-attachments/assets/0d3d1d9b-562b-46e3-a174-2ad4a9da0d8f" />
 
 <img width="392" height="187" alt="Screenshot 2026-03-05 202551" src="https://github.com/user-attachments/assets/348065fb-c6d5-41f8-9cfe-c2925b24ee62" /></br>
