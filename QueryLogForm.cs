@@ -137,12 +137,14 @@ class QueryLogForm : Form
         bar.Controls.Add(lbl);
         Draggable(lbl);
 
-        var close = MkBtn("  \u2715  ", CBg, CTxt3);
-        close.Font = new Font("Segoe UI", 12f);
+        var close = MkBtn("", CBg, CTxt3);
+        close.Image      = IconRenderer.GetCloseBitmap(CTxt3, 14);
+        close.ImageAlign = ContentAlignment.MiddleCenter;
+        close.Padding    = Padding.Empty;
         close.FlatAppearance.MouseOverBackColor = Color.FromArgb(232, 17, 35);
         close.Bounds = new Rectangle(FW-2-52, 0, 52, TH);
-        close.MouseEnter += (_, _) => close.ForeColor = Color.White;
-        close.MouseLeave += (_, _) => close.ForeColor = CTxt3;
+        close.MouseEnter += (_, _) => close.Image = IconRenderer.GetCloseBitmap(Color.White, 14);
+        close.MouseLeave += (_, _) => close.Image = IconRenderer.GetCloseBitmap(CTxt3, 14);
         close.Click += (_, _) => Close();
         bar.Controls.Add(close);
 

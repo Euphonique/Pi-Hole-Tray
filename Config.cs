@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -6,8 +7,11 @@ using Microsoft.Win32;
 
 namespace PiHoleTray;
 
-class AppConfig
+class PiHoleInstance
 {
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "Pi-Hole";
+
     [JsonPropertyName("pihole_url")]
     public string PiholeUrl { get; set; } = "http://pi.hole";
 
@@ -17,6 +21,15 @@ class AppConfig
     [JsonPropertyName("api_version")]
     public int ApiVersion { get; set; } = 6;
 
+    [JsonPropertyName("is_default")]
+    public bool IsDefault { get; set; } = false;
+}
+
+class AppConfig
+{
+    [JsonPropertyName("instances")]
+    public List<PiHoleInstance> Instances { get; set; } = [];
+
     [JsonPropertyName("autostart")]
     public bool Autostart { get; set; } = false;
 
@@ -25,6 +38,16 @@ class AppConfig
 
     [JsonPropertyName("language")]
     public string Language { get; set; } = "";
+
+    // ── Legacy flat fields — only used during migration ───────────────────────
+    [JsonPropertyName("pihole_url")]
+    public string? LegacyUrl { get; set; }
+
+    [JsonPropertyName("api_key")]
+    public string? LegacyApiKey { get; set; }
+
+    [JsonPropertyName("api_version")]
+    public int? LegacyApiVersion { get; set; }
 }
 
 static class ConfigManager
@@ -47,15 +70,55 @@ static class ConfigManager
             try
             {
                 var json = File.ReadAllText(ConfigPath);
-                return JsonSerializer.Deserialize<AppConfig>(json) ?? new AppConfig();
+                var cfg  = JsonSerializer.Deserialize<AppConfig>(json) ?? new AppConfig();
+                return Migrate(cfg);
             }
             catch { }
         }
-        return new AppConfig();
+        return DefaultConfig();
+    }
+
+    private static AppConfig Migrate(AppConfig cfg)
+    {
+        // Old single-instance config → wrap in list
+        if (cfg.Instances.Count == 0 && cfg.LegacyUrl != null)
+        {
+            cfg.Instances.Add(new PiHoleInstance
+            {
+                Name       = "Pi-Hole",
+                PiholeUrl  = cfg.LegacyUrl,
+                ApiKey     = cfg.LegacyApiKey ?? "",
+                ApiVersion = cfg.LegacyApiVersion ?? 6,
+                IsDefault  = true,
+            });
+        }
+
+        // Ensure exactly one default
+        if (cfg.Instances.Count > 0 && !cfg.Instances.Exists(i => i.IsDefault))
+            cfg.Instances[0].IsDefault = true;
+
+        return cfg;
+    }
+
+    private static AppConfig DefaultConfig()
+    {
+        var cfg = new AppConfig();
+        cfg.Instances.Add(new PiHoleInstance
+        {
+            Name      = "Pi-Hole",
+            PiholeUrl = "http://pi.hole",
+            IsDefault = true,
+        });
+        return cfg;
     }
 
     public static void Save(AppConfig cfg)
     {
+        // Clear legacy fields before saving
+        cfg.LegacyUrl        = null;
+        cfg.LegacyApiKey     = null;
+        cfg.LegacyApiVersion = null;
+
         var options = new JsonSerializerOptions { WriteIndented = true };
         File.WriteAllText(ConfigPath, JsonSerializer.Serialize(cfg, options));
     }

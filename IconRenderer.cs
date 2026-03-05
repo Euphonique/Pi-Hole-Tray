@@ -51,6 +51,94 @@ static class IconRenderer
         return icon;
     }
 
+    // ── Button icon rendering ─────────────────────────────────────────────────
+
+    /// <summary>Renders one or more SVG path strings (all same colour) to a square bitmap.</summary>
+    public static Bitmap RenderSvgBitmap(string[] paths, Color color, int size)
+    {
+        int big  = size * 4;
+        float sc = big / 256f;
+
+        using var bigBmp = new Bitmap(big, big, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(bigBmp))
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(Color.Transparent);
+            using var brush = new SolidBrush(color);
+            foreach (var p in paths)
+            {
+                using var gp = BuildPath(p, sc);
+                g.FillPath(brush, gp);
+            }
+        }
+
+        var result = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(result))
+        {
+            g.InterpolationMode  = InterpolationMode.HighQualityBicubic;
+            g.SmoothingMode      = SmoothingMode.HighQuality;
+            g.PixelOffsetMode    = PixelOffsetMode.HighQuality;
+            g.CompositingQuality = CompositingQuality.HighQuality;
+            g.DrawImage(bigBmp, 0, 0, size, size);
+        }
+        return result;
+    }
+
+    // ── Shared bitmap cache + convenience helpers ─────────────────────────────
+
+    internal const string StarPath =
+        "M249.72,100.16c-1.59,2.5-2.79,5.37-4.82,7.43-15.14,15.45-30.38,30.8-45.74,46.03-2.52,2.5-3,4.81-2.43,8.25," +
+        "3.63,21.76,7.18,43.54,10.18,65.39.4,2.9-1.68,7.04-3.95,9.21-3.51,3.35-8.27,2.96-12.66.73-14.55-7.38-29.11-14.75-43.66-22.14," +
+        "-4.57-2.32-9.18-4.6-13.64-7.12-3.02-1.71-5.64-1.56-8.72.03-18.51,9.54-37.09,18.95-55.69,28.31-2.18,1.1-4.59,2.14-6.97,2.34," +
+        "-7.27.61-12.3-4.73-11.21-11.95,3.23-21.35,6.56-42.69,10.08-63.99.64-3.89.05-6.64-2.86-9.52-15.04-14.88-29.83-30.02-44.8-44.98," +
+        "-3.46-3.45-5.48-7.29-4.04-12.12,1.13-3.81,3.69-6.22,7.94-6.9,22.08-3.57,44.11-7.45,66.23-10.78,4.15-.62,5.4-3.14,6.86-5.97," +
+        "9.41-18.24,18.8-36.48,28.09-54.78,2.35-4.63,4.85-8.82,10.9-8.64,5.83.17,8.63,4.05,10.99,8.73,9.45,18.73,19.06,37.38,28.51,56.1," +
+        "1.38,2.73,3.05,4.05,6.27,4.56,21.8,3.4,43.55,7.09,65.31,10.73,6.2,1.04,8.94,4.35,9.82,11.07Z";
+
+    private static readonly Dictionary<string, Bitmap> _bmpCache = new();
+
+    /// <summary>Returns a cached status-shield bitmap (same graphics as the tray icon).</summary>
+    public static Bitmap GetStatusBitmap(string state, int size = 16)
+    {
+        var key = $"status_{state}_{size}";
+        if (!_bmpCache.TryGetValue(key, out var bmp))
+            _bmpCache[key] = bmp = Render(state, size);
+        return bmp;
+    }
+
+    /// <summary>Returns a cached star bitmap in the requested colour.</summary>
+    public static Bitmap GetStarBitmap(Color color, int size = 16)
+    {
+        var key = $"star_{color.ToArgb()}_{size}";
+        if (!_bmpCache.TryGetValue(key, out var bmp))
+            _bmpCache[key] = bmp = RenderSvgBitmap([StarPath], color, size);
+        return bmp;
+    }
+
+    /// <summary>Returns a cached close-X bitmap drawn with round-capped lines.</summary>
+    public static Bitmap GetCloseBitmap(Color color, int size = 14)
+    {
+        var key = $"close_{color.ToArgb()}_{size}";
+        if (!_bmpCache.TryGetValue(key, out var bmp))
+            _bmpCache[key] = bmp = RenderCloseX(color, size);
+        return bmp;
+    }
+
+    private static Bitmap RenderCloseX(Color color, int size)
+    {
+        var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(bmp);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.Clear(Color.Transparent);
+        float m = size * 0.18f;
+        float e = size - m;
+        float w = Math.Max(1.5f, size * 0.12f);
+        using var pen = new Pen(color, w) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        g.DrawLine(pen, m, m, e, e);
+        g.DrawLine(pen, e, m, m, e);
+        return bmp;
+    }
+
     // ── Rendering ────────────────────────────────────────────────────────────
 
     public static Bitmap Render(string state, int size)
