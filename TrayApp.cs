@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -22,8 +24,12 @@ class TrayApp : ApplicationContext, IDisposable
     private System.Threading.Timer? _timer;
     private bool         _polling = false;
     private bool         _disposed = false;
-    private SettingsForm? _settingsWin;
+    private SettingsForm?   _settingsWin;
+    private QueryLogForm?   _queryLogWin;
     private readonly SynchronizationContext _uiContext;
+
+    // Temp-allow: domains to remove after a scheduled time
+    private readonly List<(string Domain, DateTime RemoveAt)> _tempAllows = [];
 
     // ── Logging ───────────────────────────────────────────────────────────────
 
@@ -80,6 +86,7 @@ class TrayApp : ApplicationContext, IDisposable
 
         _miEnable  = new ToolStripMenuItem(Loc.T("menu_enable",  L));
         _miDisable = new ToolStripMenuItem(Loc.T("menu_disable", L));
+        _miDisable.Font = new Font("Segoe UI", 9f, FontStyle.Bold);   // visually primary action
 
         _miEnable.Click  += async (_, _) => await DoEnableAsync();
         _miDisable.Click += async (_, _) => await DoDisableAsync();
@@ -101,14 +108,17 @@ class TrayApp : ApplicationContext, IDisposable
             timedMenu.DropDownItems.Add(item);
         }
 
+        // Section 1 — blocking controls + query log
         menu.Items.Add(_miEnable);
         menu.Items.Add(_miDisable);
-        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(timedMenu);
+        menu.Items.Add(Loc.T("menu_querylog",  L), null, (_, _) => OpenQueryLog());
         menu.Items.Add(new ToolStripSeparator());
+        // Section 2 — navigation
         menu.Items.Add(Loc.T("menu_dashboard", L), null, (_, _) => OpenDashboard());
         menu.Items.Add(Loc.T("menu_settings",  L), null, (_, _) => OpenSettings());
         menu.Items.Add(new ToolStripSeparator());
+        // Section 3 — quit
         menu.Items.Add(Loc.T("menu_quit", L),      null, (_, _) => Quit());
 
         menu.Opening += (_, _) => RefreshMenuVisibility();
@@ -181,6 +191,49 @@ class TrayApp : ApplicationContext, IDisposable
         Log($"Config saved — {cfg.PiholeUrl} v{cfg.ApiVersion} lang={_lang}");
     }
 
+    private void OpenQueryLog()
+    {
+        if (_queryLogWin != null && !_queryLogWin.IsDisposed)
+        {
+            _queryLogWin.BringToFront();
+            _queryLogWin.Focus();
+            return;
+        }
+        _queryLogWin = new QueryLogForm(_api, _lang, ScheduleTempAllow);
+        _queryLogWin.FormClosed += (_, _) => _queryLogWin = null;
+        _queryLogWin.Show();
+    }
+
+    public void ScheduleTempAllow(string domain, int minutes)
+    {
+        lock (_tempAllows)
+        {
+            _tempAllows.RemoveAll(x => x.Domain == domain);
+            _tempAllows.Add((domain, DateTime.UtcNow.AddMinutes(minutes)));
+        }
+        Log($"Temp-allow scheduled: {domain} for {minutes} min");
+    }
+
+    private async Task CheckTempAllowsAsync()
+    {
+        List<string> expired;
+        lock (_tempAllows)
+        {
+            expired = _tempAllows.Where(x => DateTime.UtcNow >= x.RemoveAt)
+                                  .Select(x => x.Domain).ToList();
+            _tempAllows.RemoveAll(x => expired.Contains(x.Domain));
+        }
+        foreach (var domain in expired)
+        {
+            try
+            {
+                await _api.RemoveDomainAsync(domain).ConfigureAwait(false);
+                Log($"Temp-allow expired, removed: {domain}");
+            }
+            catch { }
+        }
+    }
+
     private void Quit()
     {
         _timer?.Dispose();
@@ -208,6 +261,7 @@ class TrayApp : ApplicationContext, IDisposable
         _polling = true;
         try
         {
+            await CheckTempAllowsAsync().ConfigureAwait(false);
             var s = await _api.GetStatusAsync();
             if (s != null) _status = s;
             UpdateTray();

@@ -215,7 +215,98 @@ class PiHoleApi : IDisposable
         return (false, Loc.T("conn_failed", lang));
     }
 
+    // ── Query log ────────────────────────────────────────────────────────────
+
+    public async Task<List<BlockedQuery>> GetBlockedQueriesAsync(int count = 200)
+    {
+        if (Version == 6)
+        {
+            var r = await V6Async(HttpMethod.Get, $"queries?length={count}&upstream=blocklist")
+                            .ConfigureAwait(false);
+            if (r?.IsSuccessStatusCode == true)
+            {
+                var json = JsonNode.Parse(await r.Content.ReadAsStringAsync().ConfigureAwait(false));
+                var arr  = json?["queries"]?.AsArray();
+                if (arr == null) return [];
+                var list = new List<BlockedQuery>(arr.Count);
+                foreach (var q in arr)
+                {
+                    if (q == null) continue;
+                    var id     = q["id"]?.GetValue<long>() ?? 0;
+                    var ts     = q["time"]?.GetValue<double>() ?? 0;
+                    var time   = DateTimeOffset.FromUnixTimeSeconds((long)ts).LocalDateTime;
+                    var domain = q["domain"]?.GetValue<string>() ?? "";
+                    var status = q["status"]?.GetValue<string>() ?? "BLOCKED";
+                    var ip     = q["client"]?["ip"]?.GetValue<string>() ?? "";
+                    var name   = q["client"]?["name"]?.GetValue<string>() ?? "";
+                    list.Add(new BlockedQuery(id, time, domain, ip, name, status));
+                }
+                return list;
+            }
+            return [];
+        }
+
+        // v5: getAllQueries, filter blocked status codes
+        var rv = await V5Async($"getAllQueries={count}").ConfigureAwait(false);
+        if (rv?.IsSuccessStatusCode == true)
+        {
+            var json = JsonNode.Parse(await rv.Content.ReadAsStringAsync().ConfigureAwait(false));
+            var data = json?["data"]?.AsArray();
+            if (data == null) return [];
+            var list = new List<BlockedQuery>();
+            long fakeId = 0;
+            foreach (var row in data)
+            {
+                if (row is not JsonArray cols || cols.Count < 5) continue;
+                // v5 row: [timestamp, qtype, domain, client, status_int, ...]
+                var code = cols[4]?.GetValue<int>() ?? 0;
+                if (code != 2 && code != 4 && code != 5 && code != 6 && code != 7) continue;
+                var tsStr = cols[0]?.GetValue<string>() ?? "0";
+                var ts    = long.TryParse(tsStr, out var t) ? t : 0;
+                var time   = DateTimeOffset.FromUnixTimeSeconds(ts).LocalDateTime;
+                var domain = cols[2]?.GetValue<string>() ?? "";
+                var ip     = cols[3]?.GetValue<string>() ?? "";
+                var status = code switch { 2 => "GRAVITY", 4 => "REGEX_DENY", 5 => "DENYLIST",
+                                           6 => "REGEX_DENY", 7 => "DENYLIST", _ => "BLOCKED" };
+                list.Add(new BlockedQuery(fakeId++, time, domain, ip, "", status));
+            }
+            return list;
+        }
+        return [];
+    }
+
+    // ── Allowlist management ─────────────────────────────────────────────────
+
+    public async Task<bool> AllowDomainAsync(string domain)
+    {
+        if (Version == 6)
+        {
+            var r = await V6Async(HttpMethod.Post, "domains/allow/exact",
+                        new { domain, comment = "Added from PiHole Tray", enabled = true })
+                        .ConfigureAwait(false);
+            // 201 = created, 200 = updated, treat both as success; duplicate (4xx) also means it's allowed
+            return r != null && ((int)r.StatusCode is >= 200 and < 300 or 400);
+        }
+        var rv = await V5Async($"list=white&add={Uri.EscapeDataString(domain)}").ConfigureAwait(false);
+        return rv?.IsSuccessStatusCode == true;
+    }
+
+    public async Task<bool> RemoveDomainAsync(string domain)
+    {
+        if (Version == 6)
+        {
+            var r = await V6Async(HttpMethod.Delete,
+                        $"domains/allow/exact/{Uri.EscapeDataString(domain)}")
+                        .ConfigureAwait(false);
+            return r != null && ((int)r.StatusCode is >= 200 and < 300 or 404);
+        }
+        var rv = await V5Async($"list=white&sub={Uri.EscapeDataString(domain)}").ConfigureAwait(false);
+        return rv?.IsSuccessStatusCode == true;
+    }
+
     public void InvalidateAuth() { _authed = false; _sid = ""; }
 
     public void Dispose() => _client.Dispose();
 }
+
+record BlockedQuery(long Id, DateTime Time, string Domain, string ClientIp, string ClientName, string Status);
