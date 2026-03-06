@@ -10,6 +10,7 @@
     <RootNamespace>PiHoleTray</RootNamespace>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <ApplicationIcon>app.ico</ApplicationIcon>
+    <Version>1.2.1</Version>
 
     <!-- Publish: self-contained single file -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

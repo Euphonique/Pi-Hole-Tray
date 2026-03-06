@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
+using System.Reflection;
 using System.Windows.Forms;
 
 namespace PiHoleTray;
@@ -56,9 +57,11 @@ class AboutForm : Form
         };
 
         // Version
+        var version = Assembly.GetExecutingAssembly().GetName().Version;
+        var versionText = version is null ? "Version unknown" : $"Version {version.Major}.{version.Minor}.{version.Build}";
         var lblVer = new Label
         {
-            Text      = "Version 2.1",
+            Text      = versionText,
             Font      = new Font("Segoe UI", 9f),
             ForeColor = Color.Gray,
             AutoSize  = true,
