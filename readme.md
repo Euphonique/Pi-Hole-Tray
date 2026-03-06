@@ -20,7 +20,7 @@ A lightweight, unofficial Windows system tray application to control your Pi-Hol
 - **Tray icon** reflecting current status: green (active), red (disabled), orange (no connection)
 - **Left-click** to toggle blocking on/off
 - **Right-click menu** with all options
-- **NEW: Multi Pi-Hole support** manage all your pi-holes
+- **NEW: Multi Pi-Hole support** manage all your pi-holes separately or at once
 - **NEW: Star a Pi-Hole instance** to set it as default, showing the status in the tray icon.
 - **NEW: The not stared instances show up in the context menu including their status.** If there's only one Pi-Hole the context menu stays the same as before.
 - **Temporarily disable** blocking: 5 min, 10 min, 30 min, 1 h, 2 h, 5 h
