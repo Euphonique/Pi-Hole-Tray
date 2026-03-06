@@ -24,15 +24,17 @@ class TrayApp : ApplicationContext, IDisposable
     private readonly NotifyIcon _tray;
     private ContextMenuStrip    _menu;
 
-    // Top-level menu items for the default instance
+    // Top-level menu items (default instance or all-mode)
     private ToolStripMenuItem? _miEnable;
     private ToolStripMenuItem? _miDisable;
+    private ToolStripMenuItem? _miClearDefault;
 
     private System.Threading.Timer? _timer;
     private bool _polling  = false;
     private bool _disposed = false;
     private SettingsForm? _settingsWin;
     private QueryLogForm? _queryLogWin;
+    private AboutForm?    _aboutWin;
     private readonly SynchronizationContext _uiContext;
 
     private readonly List<(string Domain, DateTime RemoveAt)> _tempAllows = [];
@@ -86,7 +88,7 @@ class TrayApp : ApplicationContext, IDisposable
     }
 
     private InstanceState? DefaultInstance =>
-        _instances.FirstOrDefault(s => s.Cfg.IsDefault) ?? _instances.FirstOrDefault();
+        _instances.FirstOrDefault(s => s.Cfg.IsDefault);
 
     // ── Tray menu ─────────────────────────────────────────────────────────────
 
@@ -96,13 +98,16 @@ class TrayApp : ApplicationContext, IDisposable
         var menu = new ContextMenuStrip();
         var def  = DefaultInstance;
 
+        _miEnable       = null;
+        _miDisable      = null;
+        _miClearDefault = null;
+
         if (def != null)
         {
-            // Default instance: flat top-level items (same layout as single-instance)
+            // Default instance: flat top-level items
             _miEnable  = new ToolStripMenuItem(Loc.T("menu_enable",  L));
             _miDisable = new ToolStripMenuItem(Loc.T("menu_disable", L));
             _miDisable.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-
             _miEnable.Click  += async (_, _) => await DoEnableAsync(def);
             _miDisable.Click += async (_, _) => await DoDisableAsync(def);
 
@@ -115,16 +120,47 @@ class TrayApp : ApplicationContext, IDisposable
                 timedMenu.DropDownItems.Add(item);
             }
 
+            _miClearDefault = new ToolStripMenuItem(Loc.T("menu_clear_default", L))
+            {
+                Image = IconRenderer.GetStarBitmap(Color.Silver, 16),
+            };
+            _miClearDefault.Click += (_, _) => ClearDefault();
+
             menu.Items.Add(_miEnable);
             menu.Items.Add(_miDisable);
             menu.Items.Add(timedMenu);
             menu.Items.Add(Loc.T("menu_querylog",  L), null, (_, _) => OpenQueryLog(def));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(Loc.T("menu_dashboard", L), null, (_, _) => OpenDashboard(def.Cfg));
+            menu.Items.Add(_miClearDefault);
+        }
+        else if (_instances.Count > 0)
+        {
+            // No default — top-level items control ALL instances
+            _miEnable  = new ToolStripMenuItem(Loc.T("menu_enable_all",  L));
+            _miDisable = new ToolStripMenuItem(Loc.T("menu_disable_all", L));
+            _miDisable.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            _miEnable.Click  += async (_, _) => await DoEnableAllAsync();
+            _miDisable.Click += async (_, _) => await DoDisableAllAsync();
+
+            var timedMenu = new ToolStripMenuItem(Loc.T("menu_timed", L));
+            foreach (var (label, sec) in TimedOptions(L))
+            {
+                int s    = sec;
+                var item = new ToolStripMenuItem(label);
+                item.Click += async (_, _) => await DoDisableAllAsync(s);
+                timedMenu.DropDownItems.Add(item);
+            }
+
+            menu.Items.Add(_miEnable);
+            menu.Items.Add(_miDisable);
+            menu.Items.Add(timedMenu);
         }
 
-        // Additional instances as submenus — only shown if there are more than one
-        var others = _instances.Where(s => !s.Cfg.IsDefault).ToList();
+        // Instance submenus: non-default when a default exists, all instances otherwise
+        var others = def != null
+            ? _instances.Where(s => !s.Cfg.IsDefault).ToList()
+            : _instances.ToList();
         if (others.Count > 0)
         {
             menu.Items.Add(new ToolStripSeparator());
@@ -134,6 +170,7 @@ class TrayApp : ApplicationContext, IDisposable
 
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Loc.T("menu_settings", L), null, (_, _) => OpenSettings());
+        menu.Items.Add(Loc.T("menu_about",    L), null, (_, _) => OpenAbout());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Loc.T("menu_quit",     L), null, (_, _) => Quit());
 
@@ -202,6 +239,18 @@ class TrayApp : ApplicationContext, IDisposable
         UpdateTray();
     }
 
+    private void ClearDefault()
+    {
+        foreach (var s in _instances) s.Cfg.IsDefault = false;
+        ConfigManager.Save(_cfg);
+
+        var oldMenu = _menu;
+        _menu = BuildMenu();
+        _tray.ContextMenuStrip = _menu;
+        oldMenu.Dispose();
+        UpdateTray();
+    }
+
     private static (string label, int sec)[] TimedOptions(string L) =>
     [
         (Loc.T("menu_5min",  L),   300),
@@ -216,9 +265,20 @@ class TrayApp : ApplicationContext, IDisposable
     {
         var def = DefaultInstance;
 
-        // Top-level enable/disable visibility
-        if (_miEnable  != null) _miEnable.Visible  = def?.Status != "enabled";
-        if (_miDisable != null) _miDisable.Visible = def?.Status == "enabled";
+        if (def != null)
+        {
+            // Default mode: show Enable/Disable based on default instance status
+            if (_miEnable  != null) _miEnable.Visible  = def.Status != "enabled";
+            if (_miDisable != null) _miDisable.Visible = def.Status == "enabled";
+        }
+        else
+        {
+            // All mode: show Enable All if not all enabled, Disable All if not all disabled
+            bool allEnabled  = _instances.Count > 0 && _instances.All(s => s.Status == "enabled");
+            bool allDisabled = _instances.Count > 0 && _instances.All(s => s.Status == "disabled");
+            if (_miEnable  != null) _miEnable.Visible  = !allEnabled;
+            if (_miDisable != null) _miDisable.Visible = !allDisabled;
+        }
 
         // Update non-default instance submenu labels + icons + enable/disable visibility
         foreach (ToolStripItem item in _menu.Items)
@@ -239,8 +299,15 @@ class TrayApp : ApplicationContext, IDisposable
     private void ToggleDefault()
     {
         var def = DefaultInstance;
-        if (def == null) return;
-        _ = def.Status == "enabled" ? DoDisableAsync(def) : DoEnableAsync(def);
+        if (def != null)
+        {
+            _ = def.Status == "enabled" ? DoDisableAsync(def) : DoEnableAsync(def);
+        }
+        else
+        {
+            bool anyEnabled = _instances.Any(s => s.Status == "enabled");
+            _ = anyEnabled ? DoDisableAllAsync() : DoEnableAllAsync();
+        }
     }
 
     private async Task DoEnableAsync(InstanceState state)
@@ -252,6 +319,24 @@ class TrayApp : ApplicationContext, IDisposable
     private async Task DoDisableAsync(InstanceState state, int seconds = 0)
     {
         if (await state.Api.DisableAsync(seconds)) state.Status = "disabled";
+        UpdateTray();
+    }
+
+    private async Task DoEnableAllAsync()
+    {
+        await Task.WhenAll(_instances.Select(async s =>
+        {
+            if (await s.Api.EnableAsync()) s.Status = "enabled";
+        }));
+        UpdateTray();
+    }
+
+    private async Task DoDisableAllAsync(int seconds = 0)
+    {
+        await Task.WhenAll(_instances.Select(async s =>
+        {
+            if (await s.Api.DisableAsync(seconds)) s.Status = "disabled";
+        }));
         UpdateTray();
     }
 
@@ -276,6 +361,19 @@ class TrayApp : ApplicationContext, IDisposable
         _settingsWin = new SettingsForm(_cfg, DefaultInstance?.Status ?? "unknown", OnSaved);
         _settingsWin.FormClosed += (_, _) => _settingsWin = null;
         _settingsWin.Show();
+    }
+
+    private void OpenAbout()
+    {
+        if (_aboutWin != null && !_aboutWin.IsDisposed)
+        {
+            _aboutWin.BringToFront();
+            _aboutWin.Focus();
+            return;
+        }
+        _aboutWin = new AboutForm();
+        _aboutWin.FormClosed += (_, _) => _aboutWin = null;
+        _aboutWin.Show();
     }
 
     private void OnSaved(AppConfig cfg)
@@ -399,12 +497,23 @@ class TrayApp : ApplicationContext, IDisposable
         if (_disposed) return;
         try
         {
-            var def     = DefaultInstance;
-            var icon    = IconRenderer.GetIcon(def?.Status ?? "unknown", 64);
-            var tooltip = BuildTooltip(def);
+            var def    = DefaultInstance;
+            var status = def != null ? (def.Status ?? "unknown") : AggregateStatus();
+            var name   = def?.Cfg.Name ?? "Pi-Hole";
+            var icon   = IconRenderer.GetIcon(status, 64);
+            var tooltip = BuildTooltip(name, status);
             _uiContext.Post(_ => ApplyTray(icon, tooltip), null);
         }
         catch { }
+    }
+
+    private string AggregateStatus()
+    {
+        if (_instances.Count == 0) return "unknown";
+        if (_instances.All(s => s.Status == "enabled"))  return "enabled";
+        if (_instances.All(s => s.Status == "disabled")) return "disabled";
+        if (_instances.Any(s => s.Status == "enabled"))  return "mixed";
+        return "unknown";
     }
 
     private void ApplyTray(Icon icon, string tooltip)
@@ -417,15 +526,15 @@ class TrayApp : ApplicationContext, IDisposable
         catch { }
     }
 
-    private string BuildTooltip(InstanceState? def)
+    private string BuildTooltip(string name, string status)
     {
-        var label = def?.Status switch
+        var label = status switch
         {
             "enabled"  => Loc.T("tray_active",   _lang),
             "disabled" => Loc.T("tray_disabled",  _lang),
             _          => Loc.T("tray_noconn",    _lang),
         };
-        return $"{def?.Cfg.Name ?? "Pi-Hole"}: {label}";
+        return $"{name}: {label}";
     }
 
     // ── Dispose ───────────────────────────────────────────────────────────────

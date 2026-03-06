@@ -93,10 +93,6 @@ static class ConfigManager
             });
         }
 
-        // Ensure exactly one default
-        if (cfg.Instances.Count > 0 && !cfg.Instances.Exists(i => i.IsDefault))
-            cfg.Instances[0].IsDefault = true;
-
         return cfg;
     }
 

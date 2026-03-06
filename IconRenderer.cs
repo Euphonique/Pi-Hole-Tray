@@ -36,6 +36,39 @@ static class IconRenderer
 
     private record IconDef(Color ShieldColor, string ShieldPath, string[] SymbolPaths);
 
+    // ── Multi-color paths (shield_multi.svg — mixed-status icon) ─────────────
+    // Paths are listed in SVG document order so layers render correctly.
+
+    private static readonly Color MultiYellow = Color.FromArgb(0xF9, 0xB2, 0x33);
+    private static readonly Color MultiGreen  = Color.FromArgb(0x95, 0xC1, 0x1F);
+    private static readonly Color MultiRed    = Color.FromArgb(0xE3, 0x06, 0x13);
+
+    private static readonly (string Path, Color Color)[] MultiPaths =
+    [
+        // cls-1 yellow (stripe group 1)
+        ("M73.4,23L9.6,86.8c0,.3,0,.5,0,.8L74.8,22.4c-.5.2-1,.4-1.4.6Z", MultiYellow),
+        ("M170.9,18.1s0,0-.1,0L28.2,160.6s0,0,0,.1L170.9,18.1Z", MultiYellow),
+        ("M194.9,28.2c-.3-.1-.6-.3-1-.4L39.5,182.3c.2.3.3.6.5.8L194.9,28.2Z", MultiYellow),
+        // cls-2 green (stripe group 1)
+        ("M121.2,3c-8.2,2.6-16,6.5-23.9,9.9-7.5,3.2-15,6.3-22.5,9.5L9.7,87.6c.7,8.5,1.9,16.9,3.5,25.1L123.4,2.4c-.8.2-1.5.3-2.2.6Z", MultiGreen),
+        ("M171.4,18.3L28.5,161.2c3.1,6.8,6.5,13.4,10.3,19.9.2.4.5.8.7,1.2L193.9,27.8c-7.5-3.2-15-6.4-22.6-9.5Z", MultiGreen),
+        ("M247.1,69.8c-.5-8.3-3.3-15.3-8.8-20.6L68.5,219.1c5,4.8,10.3,9.3,15.9,13.5L247.1,69.8Z", MultiGreen),
+        // cls-3 red
+        ("M29.1,41.7c-13.6,5.8-20.8,16-20.3,30.9.1,4.8.4,9.5.8,14.2l63.8-63.8c-14.7,6.2-29.5,12.5-44.2,18.7Z", MultiRed),
+        ("M149,9L19.7,138.3c2.4,7.6,5.3,15,8.6,22.3L170.8,18c-7.3-3-14.5-6.1-21.8-9.1Z", MultiRed),
+        ("M227,41.9c-3.1-1.3-6.3-2.7-9.4-4L53.2,202.2c4.7,6,9.8,11.6,15.2,16.8L238.3,49.2c-3-2.9-6.8-5.4-11.3-7.3Z", MultiRed),
+        ("M243.8,105.6L104,245.3c3.7,2,7.4,3.9,11.3,5.7,4,1.8,8,2.9,12.1,3l105.3-105.3c5.1-13.8,8.7-28.2,11.1-43.2Z", MultiRed),
+        // cls-1 yellow (stripe group 2)
+        ("M134.4,2.9c-3.1-1.3-7.3-1.3-11-.5L13.2,112.7c1.7,8.7,3.8,17.2,6.5,25.6L149,9c-4.9-2-9.7-4-14.6-6Z", MultiYellow),
+        ("M53.1,202.1L217.4,37.8c-7.5-3.2-15-6.4-22.5-9.6L40,183.1c4,6.7,8.4,13,13.1,19Z", MultiYellow),
+        ("M243.8,105.2c1.5-9.4,2.6-19.1,3.2-28.9h0c.2-2.3.2-4.4,0-6.5L84.4,232.6c6.1,4.6,12.6,8.8,19.5,12.6L243.8,105.2Z", MultiYellow),
+        // cls-2 green (final cap)
+        ("M140.3,251c11.6-6.3,23.5-12.5,33.7-20.7,28.6-22.8,47.2-50.4,58.6-81.4l-105.2,105.2c4.4.1,8.7-.8,12.9-3.1Z", MultiGreen),
+        // cls-4 white (exclamation mark)
+        ("M143.6,74c.1-6.6-6.8-14-15.4-14.2-8.7-.2-16.2,7.3-15.9,16.3.2,5.6.8,11.2,1.2,16.9.8,11.4,1.4,22.9,2.5,34.3.8,7.7,5.6,11.9,12.5,11.7,6.4-.1,10.9-4.5,11.5-12.1,1.4-16.9,2.4-33.8,3.7-52.8h0Z", Color.White),
+        ("M127.8,186.7c8.8,0,16.1-7,16.1-15.5,0-8.7-7.6-16.3-16.3-16.1-8.7.2-15.6,7.2-15.6,16,0,8.9,6.8,15.6,15.8,15.6h0Z", Color.White),
+    ];
+
     // ── Icon cache ───────────────────────────────────────────────────────────
 
     private static readonly Dictionary<(string, int), Icon> _cache = new();
@@ -45,7 +78,7 @@ static class IconRenderer
         var key = (state, size);
         if (_cache.TryGetValue(key, out var cached)) return cached;
 
-        using var bmp = Render(state, size);
+        using var bmp = state == "mixed" ? RenderMulti(size) : Render(state, size);
         var icon     = BitmapToIcon(bmp);
         _cache[key] = icon;
         return icon;
@@ -102,7 +135,7 @@ static class IconRenderer
     {
         var key = $"status_{state}_{size}";
         if (!_bmpCache.TryGetValue(key, out var bmp))
-            _bmpCache[key] = bmp = Render(state, size);
+            _bmpCache[key] = bmp = state == "mixed" ? RenderMulti(size) : Render(state, size);
         return bmp;
     }
 
@@ -170,6 +203,39 @@ static class IconRenderer
         }
 
         // Downscale with high quality
+        var result = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(result))
+        {
+            g.InterpolationMode  = InterpolationMode.HighQualityBicubic;
+            g.SmoothingMode      = SmoothingMode.HighQuality;
+            g.PixelOffsetMode    = PixelOffsetMode.HighQuality;
+            g.CompositingQuality = CompositingQuality.HighQuality;
+            g.DrawImage(bigBmp, 0, 0, size, size);
+        }
+        return result;
+    }
+
+    /// <summary>Renders the multi-color shield (shield_multi.svg) for mixed-status display.</summary>
+    private static Bitmap RenderMulti(int size)
+    {
+        int big  = size * 4;
+        float sc = big / 256f;
+
+        using var bigBmp = new Bitmap(big, big, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(bigBmp))
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(Color.Transparent);
+
+            foreach (var (path, color) in MultiPaths)
+            {
+                using var brush = new SolidBrush(color);
+                using var gp    = BuildPath(path, sc);
+                gp.FillMode     = FillMode.Winding;
+                g.FillPath(brush, gp);
+            }
+        }
+
         var result = new Bitmap(size, size, PixelFormat.Format32bppArgb);
         using (var g = Graphics.FromImage(result))
         {
