@@ -11,7 +11,7 @@ class SettingsForm : Form
 {
     // ── Layout constants ──────────────────────────────────────────────────────
     private const int FW   = 640;   // form width
-    private const int FH   = 608;   // form height (increased for instance bar)
+    private const int FH   = 750;   // form height (increased for per-client settings)
     private const int TH   = 52;    // title bar height
     private const int IH   = 48;    // instance bar height
     private const int BH   = 64;    // button bar height
@@ -95,8 +95,13 @@ class SettingsForm : Form
     private RadioButton   _rbV5      = null!;
     private NumericUpDown _pollNud   = null!;
     private CheckBox      _autoChk   = null!;
-    private ComboBox      _langCombo = null!;
-    private Label         _statusLbl = null!;
+    private ComboBox      _langCombo    = null!;
+    private ComboBox      _lcaCombo     = null!;
+    private TextBox       _clientIpTb   = null!;
+    private Label         _statusLbl    = null!;
+
+    // Per-client controls (hidden when v5)
+    private readonly List<Control> _clientControls = [];
 
     private Point _drag;
     private bool  _suppressComboChange = false;
@@ -146,6 +151,7 @@ class SettingsForm : Form
         BuildInstanceBar(s);
         BuildContent(s);
         BuildButtonBar(s);
+        RefreshClientFieldsVisibility();
 
         ResumeLayout();
         PositionNearTaskbar();
@@ -273,6 +279,7 @@ class SettingsForm : Form
             _selectedIdx = _instCombo.SelectedIndex;
             LoadCurrentFields();
             RefreshBarButtons();
+            RefreshClientFieldsVisibility();
         };
 
         RefreshBarButtons();
@@ -331,6 +338,24 @@ class SettingsForm : Form
         // 🗑: only if more than one instance
         _btnDel.Enabled = canDel;
         _btnDel.Cursor  = canDel ? Cursors.Hand : Cursors.Default;
+    }
+
+    private void RefreshClientFieldsVisibility()
+    {
+        // Check if any instance is v6 (considering current unsaved radio state)
+        bool anyV6 = false;
+        for (int i = 0; i < _instances.Count; i++)
+        {
+            if (i == _selectedIdx)
+                anyV6 = anyV6 || _rbV6.Checked;
+            else
+                anyV6 = anyV6 || _instances[i].ApiVersion == 6;
+        }
+        foreach (var c in _clientControls) c.Visible = anyV6;
+
+        // If no v6, reset left-click action away from toggle_client
+        if (!anyV6 && _lcaCombo.SelectedIndex == 1)
+            _lcaCombo.SelectedIndex = 0;
     }
 
     private void SetCurrentAsDefault()
@@ -439,6 +464,7 @@ class SettingsForm : Form
         AddFieldLabel(s, Loc.T("version", _lang), LX, ref y);
         _rbV6 = AddRadio(s, Loc.T("v6_label", _lang), LX,       y, _instances[_selectedIdx].ApiVersion == 6);
         _rbV5 = AddRadio(s, Loc.T("v5_label", _lang), LX + 128, y, _instances[_selectedIdx].ApiVersion == 5);
+        _rbV6.CheckedChanged += (_, _) => RefreshClientFieldsVisibility();
     }
 
     private void BuildRight(Panel s, int y0)
@@ -492,7 +518,38 @@ class SettingsForm : Form
         if (Loc.Langs.TryGetValue(Loc.GetEffectiveLang(_cfg.Language), out var cur))
             _langCombo.SelectedItem = cur;
         s.Controls.Add(_langCombo);
-        y += InH + 24;
+        y += InH + 20;
+
+        var lcaLabel = AddFieldLabelEx(s, Loc.T("left_click_action", _lang), RX, ref y);
+        _lcaCombo = new ComboBox
+        {
+            Bounds        = new Rectangle(RX, y, CW, InH),
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            BackColor     = CInputBg,
+            ForeColor     = CTxt,
+            Font          = _fInput,
+            FlatStyle     = FlatStyle.Flat,
+        };
+        var lcaOptions = new (string key, string label)[]
+        {
+            ("toggle_global", Loc.T("lca_toggle_global", _lang)),
+            ("toggle_client", Loc.T("lca_toggle_client", _lang)),
+            ("open_dashboard", Loc.T("lca_dashboard", _lang)),
+            ("none", Loc.T("lca_none", _lang)),
+        };
+        foreach (var (_, label) in lcaOptions) _lcaCombo.Items.Add(label);
+        var selectedLca = lcaOptions.FirstOrDefault(o => o.key == _cfg.LeftClickAction);
+        if (selectedLca.label != null) _lcaCombo.SelectedItem = selectedLca.label;
+        else _lcaCombo.SelectedIndex = 0;
+        s.Controls.Add(_lcaCombo);
+        y += InH + 20;
+        _clientControls.AddRange([lcaLabel, _lcaCombo]);
+
+        var cipLabel = AddFieldLabelEx(s, Loc.T("client_ip", _lang), RX, ref y);
+        _clientIpTb = AddInput(s, RX, y, CW); y += InH + 14;
+        _clientIpTb.Text = _cfg.ClientIp;
+        var cipHint = AddHintEx(s, Loc.T("client_ip_hint", _lang), RX, ref y);
+        _clientControls.AddRange([cipLabel, _clientIpTb.Parent!, cipHint]);
 
         AddFieldLabel(s, Loc.T("status", _lang), RX, ref y);
         _statusLbl = new Label
@@ -585,18 +642,32 @@ class SettingsForm : Form
 
     private void AddFieldLabel(Panel p, string text, int x, ref int y)
     {
-        p.Controls.Add(new Label { Text = text, Font = _fLabel, ForeColor = CTxt2,
-                                   AutoSize = true, Location = new Point(x, y),
-                                   BackColor = Color.Transparent });
+        AddFieldLabelEx(p, text, x, ref y);
+    }
+
+    private Label AddFieldLabelEx(Panel p, string text, int x, ref int y)
+    {
+        var lbl = new Label { Text = text, Font = _fLabel, ForeColor = CTxt2,
+                              AutoSize = true, Location = new Point(x, y),
+                              BackColor = Color.Transparent };
+        p.Controls.Add(lbl);
         y += 16 + 14;
+        return lbl;
     }
 
     private void AddHint(Panel p, string text, int x, ref int y)
     {
-        p.Controls.Add(new Label { Text = text, Font = _fHint, ForeColor = CTxt3,
-                                   AutoSize = true, Location = new Point(x, y),
-                                   BackColor = Color.Transparent });
+        AddHintEx(p, text, x, ref y);
+    }
+
+    private Label AddHintEx(Panel p, string text, int x, ref int y)
+    {
+        var lbl = new Label { Text = text, Font = _fHint, ForeColor = CTxt3,
+                              AutoSize = true, Location = new Point(x, y),
+                              BackColor = Color.Transparent };
+        p.Controls.Add(lbl);
         y += 14 + 20;
+        return lbl;
     }
 
     private RadioButton AddRadio(Panel p, string text, int x, int y, bool chk) =>
@@ -655,6 +726,14 @@ class SettingsForm : Form
         SetStatus($"{(ok ? "✓" : "✗")}  {msg.Replace("\n", "  •  ")}", ok ? CAccent : CRed);
     }
 
+    private static readonly (string key, string label)[] LcaKeys =
+    [
+        ("toggle_global", "lca_toggle_global"),
+        ("toggle_client", "lca_toggle_client"),
+        ("open_dashboard", "lca_dashboard"),
+        ("none", "lca_none"),
+    ];
+
     private void DoSave()
     {
         SaveCurrentFields();
@@ -664,6 +743,11 @@ class SettingsForm : Form
         _cfg.Autostart    = _autoChk.Checked;
         var langName      = _langCombo.SelectedItem?.ToString() ?? "";
         _cfg.Language     = Loc.Langs.FirstOrDefault(kv => kv.Value == langName).Key ?? "";
+        _cfg.ClientIp     = _clientIpTb.Text.Trim();
+
+        // Map selected left-click action label back to config key
+        var lcaIdx = _lcaCombo.SelectedIndex;
+        _cfg.LeftClickAction = lcaIdx >= 0 && lcaIdx < LcaKeys.Length ? LcaKeys[lcaIdx].key : "toggle_global";
 
         ConfigManager.Save(_cfg);
         ConfigManager.SetAutostart(_cfg.Autostart);

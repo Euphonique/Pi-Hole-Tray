@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -18,6 +20,7 @@ class TrayApp : ApplicationContext, IDisposable
     private record InstanceState(PiHoleInstance Cfg, PiHoleApi Api)
     {
         public string? Status { get; set; }
+        public bool ClientUnblocked { get; set; }
     }
     private List<InstanceState> _instances = [];
 
@@ -28,6 +31,11 @@ class TrayApp : ApplicationContext, IDisposable
     private ToolStripMenuItem? _miEnable;
     private ToolStripMenuItem? _miDisable;
     private ToolStripMenuItem? _miClearDefault;
+
+    // Per-client menu items (v6 only)
+    private ToolStripMenuItem? _miEnableClient;
+    private ToolStripMenuItem? _miDisableClient;
+    private ToolStripMenuItem? _miTimedClient;
 
     private System.Threading.Timer? _timer;
     private bool _polling  = false;
@@ -72,7 +80,7 @@ class TrayApp : ApplicationContext, IDisposable
         };
         _tray.MouseClick += (_, e) =>
         {
-            if (e.Button == MouseButtons.Left) ToggleDefault();
+            if (e.Button == MouseButtons.Left) HandleLeftClick();
         };
 
         Log($"Start — {_cfg.Instances.Count} instance(s) lang={_lang}");
@@ -101,6 +109,9 @@ class TrayApp : ApplicationContext, IDisposable
         _miEnable       = null;
         _miDisable      = null;
         _miClearDefault = null;
+        _miEnableClient  = null;
+        _miDisableClient = null;
+        _miTimedClient   = null;
 
         if (def != null)
         {
@@ -129,8 +140,33 @@ class TrayApp : ApplicationContext, IDisposable
             menu.Items.Add(_miEnable);
             menu.Items.Add(_miDisable);
             menu.Items.Add(timedMenu);
-            menu.Items.Add(Loc.T("menu_querylog",  L), null, (_, _) => OpenQueryLog(def));
+
+            // Per-client items (v6 only)
+            if (def.Cfg.ApiVersion == 6)
+            {
+                menu.Items.Add(new ToolStripSeparator());
+
+                _miEnableClient  = new ToolStripMenuItem(Loc.T("menu_enable_client",  L));
+                _miDisableClient = new ToolStripMenuItem(Loc.T("menu_disable_client", L));
+                _miEnableClient.Click  += async (_, _) => await DoEnableClientAsync(def);
+                _miDisableClient.Click += async (_, _) => await DoDisableClientAsync(def);
+
+                _miTimedClient = new ToolStripMenuItem(Loc.T("menu_timed_client", L));
+                foreach (var (label, sec) in TimedOptions(L))
+                {
+                    int s    = sec;
+                    var item = new ToolStripMenuItem(label);
+                    item.Click += async (_, _) => await DoDisableClientTimedAsync(def, s);
+                    _miTimedClient.DropDownItems.Add(item);
+                }
+
+                menu.Items.Add(_miEnableClient);
+                menu.Items.Add(_miDisableClient);
+                menu.Items.Add(_miTimedClient);
+            }
+
             menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(Loc.T("menu_querylog",  L), null, (_, _) => OpenQueryLog(def));
             menu.Items.Add(Loc.T("menu_dashboard", L), null, (_, _) => OpenDashboard(def.Cfg));
             menu.Items.Add(_miClearDefault);
         }
@@ -155,6 +191,31 @@ class TrayApp : ApplicationContext, IDisposable
             menu.Items.Add(_miEnable);
             menu.Items.Add(_miDisable);
             menu.Items.Add(timedMenu);
+
+            // Per-client items if any v6 instance exists
+            var firstV6 = _instances.FirstOrDefault(s => s.Cfg.ApiVersion == 6);
+            if (firstV6 != null)
+            {
+                menu.Items.Add(new ToolStripSeparator());
+
+                _miEnableClient  = new ToolStripMenuItem(Loc.T("menu_enable_client",  L));
+                _miDisableClient = new ToolStripMenuItem(Loc.T("menu_disable_client", L));
+                _miEnableClient.Click  += async (_, _) => await DoEnableClientAsync(firstV6);
+                _miDisableClient.Click += async (_, _) => await DoDisableClientAsync(firstV6);
+
+                _miTimedClient = new ToolStripMenuItem(Loc.T("menu_timed_client", L));
+                foreach (var (label, sec) in TimedOptions(L))
+                {
+                    int s    = sec;
+                    var item = new ToolStripMenuItem(label);
+                    item.Click += async (_, _) => await DoDisableClientTimedAsync(firstV6, s);
+                    _miTimedClient.DropDownItems.Add(item);
+                }
+
+                menu.Items.Add(_miEnableClient);
+                menu.Items.Add(_miDisableClient);
+                menu.Items.Add(_miTimedClient);
+            }
         }
 
         // Instance submenus: non-default when a default exists, all instances otherwise
@@ -217,8 +278,33 @@ class TrayApp : ApplicationContext, IDisposable
         root.DropDownItems.Add(miEnable);
         root.DropDownItems.Add(miDisable);
         root.DropDownItems.Add(timedMenu);
-        root.DropDownItems.Add(miQueryLog);
+
+        // Per-client items in instance submenu (v6 only)
+        if (state.Cfg.ApiVersion == 6)
+        {
+            root.DropDownItems.Add(new ToolStripSeparator());
+
+            var miEnableC  = new ToolStripMenuItem(Loc.T("menu_enable_client",  L));
+            var miDisableC = new ToolStripMenuItem(Loc.T("menu_disable_client", L));
+            miEnableC.Click  += async (_, _) => await DoEnableClientAsync(state);
+            miDisableC.Click += async (_, _) => await DoDisableClientAsync(state);
+
+            var timedClientMenu = new ToolStripMenuItem(Loc.T("menu_timed_client", L));
+            foreach (var (lbl, sc) in TimedOptions(L))
+            {
+                int sv   = sc;
+                var itm  = new ToolStripMenuItem(lbl);
+                itm.Click += async (_, _) => await DoDisableClientTimedAsync(state, sv);
+                timedClientMenu.DropDownItems.Add(itm);
+            }
+
+            root.DropDownItems.Add(miEnableC);
+            root.DropDownItems.Add(miDisableC);
+            root.DropDownItems.Add(timedClientMenu);
+        }
+
         root.DropDownItems.Add(new ToolStripSeparator());
+        root.DropDownItems.Add(miQueryLog);
         root.DropDownItems.Add(miDash);
         root.DropDownItems.Add(new ToolStripSeparator());
         root.DropDownItems.Add(miSetDefault);
@@ -270,6 +356,11 @@ class TrayApp : ApplicationContext, IDisposable
             // Default mode: show Enable/Disable based on default instance status
             if (_miEnable  != null) _miEnable.Visible  = def.Status != "enabled";
             if (_miDisable != null) _miDisable.Visible = def.Status == "enabled";
+
+            // Per-client: show Enable/Disable based on client unblocked state
+            if (_miEnableClient  != null) _miEnableClient.Visible  = def.ClientUnblocked;
+            if (_miDisableClient != null) _miDisableClient.Visible = !def.ClientUnblocked;
+            if (_miTimedClient   != null) _miTimedClient.Visible   = !def.ClientUnblocked;
         }
         else
         {
@@ -278,6 +369,15 @@ class TrayApp : ApplicationContext, IDisposable
             bool allDisabled = _instances.Count > 0 && _instances.All(s => s.Status == "disabled");
             if (_miEnable  != null) _miEnable.Visible  = !allEnabled;
             if (_miDisable != null) _miDisable.Visible = !allDisabled;
+
+            // Per-client visibility based on first v6 instance
+            var firstV6 = _instances.FirstOrDefault(s => s.Cfg.ApiVersion == 6);
+            if (firstV6 != null)
+            {
+                if (_miEnableClient  != null) _miEnableClient.Visible  = firstV6.ClientUnblocked;
+                if (_miDisableClient != null) _miDisableClient.Visible = !firstV6.ClientUnblocked;
+                if (_miTimedClient   != null) _miTimedClient.Visible   = !firstV6.ClientUnblocked;
+            }
         }
 
         // Update non-default instance submenu labels + icons + enable/disable visibility
@@ -288,13 +388,40 @@ class TrayApp : ApplicationContext, IDisposable
             mi.Image = IconRenderer.GetStatusBitmap(state.Status ?? "unknown", 16);
             if (mi.DropDownItems.Count >= 2)
             {
-                mi.DropDownItems[0].Visible = state.Status != "enabled";
-                mi.DropDownItems[1].Visible = state.Status == "enabled";
+                mi.DropDownItems[0].Visible = state.Status != "enabled";  // Enable
+                mi.DropDownItems[1].Visible = state.Status == "enabled";  // Disable
+            }
+            // Per-client items in submenu (v6): after separator at index 3
+            if (state.Cfg.ApiVersion == 6 && mi.DropDownItems.Count >= 7)
+            {
+                mi.DropDownItems[4].Visible = state.ClientUnblocked;   // Enable client
+                mi.DropDownItems[5].Visible = !state.ClientUnblocked;  // Disable client
+                mi.DropDownItems[6].Visible = !state.ClientUnblocked;  // Timed client
             }
         }
     }
 
     // ── Actions ───────────────────────────────────────────────────────────────
+
+    private void HandleLeftClick()
+    {
+        switch (_cfg.LeftClickAction)
+        {
+            case "toggle_client":
+                ToggleClient();
+                break;
+            case "open_dashboard":
+                var d = DefaultInstance;
+                if (d != null) OpenDashboard(d.Cfg);
+                else if (_instances.Count > 0) OpenDashboard(_instances[0].Cfg);
+                break;
+            case "none":
+                break;
+            default: // "toggle_global"
+                ToggleDefault();
+                break;
+        }
+    }
 
     private void ToggleDefault()
     {
@@ -308,6 +435,13 @@ class TrayApp : ApplicationContext, IDisposable
             bool anyEnabled = _instances.Any(s => s.Status == "enabled");
             _ = anyEnabled ? DoDisableAllAsync() : DoEnableAllAsync();
         }
+    }
+
+    private void ToggleClient()
+    {
+        var def = DefaultInstance ?? _instances.FirstOrDefault();
+        if (def == null || def.Cfg.ApiVersion != 6) return;
+        _ = def.ClientUnblocked ? DoEnableClientAsync(def) : DoDisableClientAsync(def);
     }
 
     private async Task DoEnableAsync(InstanceState state)
@@ -338,6 +472,56 @@ class TrayApp : ApplicationContext, IDisposable
             if (await s.Api.DisableAsync(seconds)) s.Status = "disabled";
         }));
         UpdateTray();
+    }
+
+    // ── Per-client actions ──────────────────────────────────────────────────
+
+    private string GetClientIp()
+    {
+        if (!string.IsNullOrWhiteSpace(_cfg.ClientIp)) return _cfg.ClientIp.Trim();
+        return DetectLocalIp();
+    }
+
+    private static string DetectLocalIp()
+    {
+        try
+        {
+            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, 0);
+            socket.Connect("8.8.8.8", 80);
+            return ((IPEndPoint)socket.LocalEndPoint!).Address.ToString();
+        }
+        catch { return "127.0.0.1"; }
+    }
+
+    private async Task DoDisableClientAsync(InstanceState state)
+    {
+        var ip = GetClientIp();
+        if (await state.Api.DisableClientAsync(ip)) state.ClientUnblocked = true;
+        UpdateTray();
+    }
+
+    private async Task DoEnableClientAsync(InstanceState state)
+    {
+        var ip = GetClientIp();
+        if (await state.Api.EnableClientAsync(ip)) state.ClientUnblocked = false;
+        UpdateTray();
+    }
+
+    private async Task DoDisableClientTimedAsync(InstanceState state, int seconds)
+    {
+        var ip = GetClientIp();
+        if (await state.Api.DisableClientAsync(ip))
+        {
+            state.ClientUnblocked = true;
+            UpdateTray();
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(seconds)).ConfigureAwait(false);
+                if (await state.Api.EnableClientAsync(ip).ConfigureAwait(false))
+                    state.ClientUnblocked = false;
+                UpdateTray();
+            });
+        }
     }
 
     private void OpenDashboard(PiHoleInstance inst)
@@ -468,12 +652,20 @@ class TrayApp : ApplicationContext, IDisposable
         {
             await CheckTempAllowsAsync().ConfigureAwait(false);
 
+            var clientIp = GetClientIp();
             var tasks = _instances.Select(async state =>
             {
                 try
                 {
                     var s = await state.Api.GetStatusAsync().ConfigureAwait(false);
                     if (s != null) state.Status = s;
+
+                    // Poll per-client status for v6 instances
+                    if (state.Cfg.ApiVersion == 6)
+                    {
+                        state.ClientUnblocked = await state.Api.IsClientUnblockedAsync(clientIp)
+                                                               .ConfigureAwait(false);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -500,8 +692,19 @@ class TrayApp : ApplicationContext, IDisposable
             var def    = DefaultInstance;
             var status = def != null ? (def.Status ?? "unknown") : AggregateStatus();
             var name   = def?.Cfg.Name ?? "Pi-Hole";
-            var icon   = IconRenderer.GetIcon(status, 64);
-            var tooltip = BuildTooltip(name, status);
+
+            // Use client-specific icons only when client state differs from global
+            var iconState = status;
+            var clientInst = def?.Cfg.ApiVersion == 6 ? def
+                : _instances.FirstOrDefault(s => s.Cfg.ApiVersion == 6);
+            if (clientInst != null && status == "enabled" && clientInst.ClientUnblocked)
+                iconState = "client_disabled";
+            else if (clientInst != null && status == "enabled"
+                     && _cfg.LeftClickAction == "toggle_client")
+                iconState = "client_enabled";
+
+            var icon    = IconRenderer.GetIcon(iconState, 64);
+            var tooltip = BuildTooltip(name, status, clientInst?.ClientUnblocked == true);
             _uiContext.Post(_ => ApplyTray(icon, tooltip), null);
         }
         catch { }
@@ -526,7 +729,7 @@ class TrayApp : ApplicationContext, IDisposable
         catch { }
     }
 
-    private string BuildTooltip(string name, string status)
+    private string BuildTooltip(string name, string status, bool clientUnblocked = false)
     {
         var label = status switch
         {
@@ -534,7 +737,10 @@ class TrayApp : ApplicationContext, IDisposable
             "disabled" => Loc.T("tray_disabled",  _lang),
             _          => Loc.T("tray_noconn",    _lang),
         };
-        return $"{name}: {label}";
+        var tip = $"{name}: {label}";
+        if (clientUnblocked)
+            tip += $" ({Loc.T("tray_client_disabled", _lang)})";
+        return tip;
     }
 
     // ── Dispose ───────────────────────────────────────────────────────────────

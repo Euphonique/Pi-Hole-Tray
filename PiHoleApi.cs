@@ -38,10 +38,27 @@ class PiHoleApi : IDisposable
 
     private string V6Url(string ep) => $"{BaseUrl}/api/{ep.TrimStart('/')}";
 
+    private async Task LogoutV6Async()
+    {
+        if (string.IsNullOrEmpty(_sid)) return;
+        try
+        {
+            var req = new HttpRequestMessage(HttpMethod.Delete, V6Url("auth"));
+            req.Headers.Add("sid", _sid);
+            await _client.SendAsync(req).ConfigureAwait(false);
+        }
+        catch { }
+        _sid = "";
+        _authed = false;
+    }
+
     private async Task<bool> AuthV6Async()
     {
         try
         {
+            // Close existing session before opening a new one
+            await LogoutV6Async().ConfigureAwait(false);
+
             var body    = JsonSerializer.Serialize(new { password = Password });
             var content = new StringContent(body, Encoding.UTF8, "application/json");
             var resp    = await _client.PostAsync(V6Url("auth"), content).ConfigureAwait(false);
@@ -304,9 +321,117 @@ class PiHoleApi : IDisposable
         return rv?.IsSuccessStatusCode == true;
     }
 
-    public void InvalidateAuth() { _authed = false; _sid = ""; }
+    // ── Per-client group management (v6 only) ─────────────────────────────
 
-    public void Dispose() => _client.Dispose();
+    private int? _unblockedGroupId;
+
+    public async Task<int> GetOrCreateUnblockedGroupAsync()
+    {
+        if (_unblockedGroupId.HasValue) return _unblockedGroupId.Value;
+        if (Version != 6) return -1;
+
+        // Check if group already exists
+        var r = await V6Async(HttpMethod.Get, "groups").ConfigureAwait(false);
+        if (r?.IsSuccessStatusCode == true)
+        {
+            var json = JsonNode.Parse(await r.Content.ReadAsStringAsync().ConfigureAwait(false));
+            var groups = json?["groups"]?.AsArray();
+            if (groups != null)
+            {
+                foreach (var g in groups)
+                {
+                    if (g?["name"]?.GetValue<string>() == "PiHoleTray_Unblocked")
+                    {
+                        _unblockedGroupId = g["id"]?.GetValue<int>() ?? -1;
+                        return _unblockedGroupId.Value;
+                    }
+                }
+            }
+        }
+
+        // Create the group
+        var cr = await V6Async(HttpMethod.Post, "groups",
+            new { name = "PiHoleTray_Unblocked", comment = "Created by PiHole Tray – no adlists attached", enabled = true })
+            .ConfigureAwait(false);
+        if (cr != null && (int)cr.StatusCode is >= 200 and < 300)
+        {
+            var json = JsonNode.Parse(await cr.Content.ReadAsStringAsync().ConfigureAwait(false));
+            _unblockedGroupId = json?["group"]?["id"]?.GetValue<int>()
+                             ?? json?["id"]?.GetValue<int>()
+                             ?? -1;
+            return _unblockedGroupId.Value;
+        }
+        return -1;
+    }
+
+    public async Task<bool> EnsureClientAsync(string clientIp)
+    {
+        if (Version != 6) return false;
+
+        // Check if client exists
+        var r = await V6Async(HttpMethod.Get, $"clients/{Uri.EscapeDataString(clientIp)}")
+                        .ConfigureAwait(false);
+        if (r?.IsSuccessStatusCode == true) return true;
+
+        // Create client
+        var cr = await V6Async(HttpMethod.Post, "clients",
+            new { client = clientIp, comment = "Added by PiHole Tray" })
+            .ConfigureAwait(false);
+        return cr != null && (int)cr.StatusCode is >= 200 and < 300 or 409;
+    }
+
+    public async Task<bool> IsClientUnblockedAsync(string clientIp)
+    {
+        if (Version != 6) return false;
+        var gid = await GetOrCreateUnblockedGroupAsync().ConfigureAwait(false);
+        if (gid < 0) return false;
+
+        var r = await V6Async(HttpMethod.Get, $"clients/{Uri.EscapeDataString(clientIp)}")
+                        .ConfigureAwait(false);
+        if (r?.IsSuccessStatusCode != true) return false;
+
+        var json = JsonNode.Parse(await r.Content.ReadAsStringAsync().ConfigureAwait(false));
+        var groups = json?["client"]?["groups"]?.AsArray();
+        if (groups == null) return false;
+
+        // Unblocked = only in unblocked group (not in default group 0)
+        var ids = new HashSet<int>();
+        foreach (var g in groups) ids.Add(g?.GetValue<int>() ?? -1);
+        return ids.Contains(gid) && !ids.Contains(0);
+    }
+
+    public async Task<bool> DisableClientAsync(string clientIp)
+    {
+        if (Version != 6) return false;
+        var gid = await GetOrCreateUnblockedGroupAsync().ConfigureAwait(false);
+        if (gid < 0) return false;
+
+        await EnsureClientAsync(clientIp).ConfigureAwait(false);
+
+        var r = await V6Async(HttpMethod.Put, $"clients/{Uri.EscapeDataString(clientIp)}",
+            new { groups = new[] { gid } }).ConfigureAwait(false);
+        return r?.IsSuccessStatusCode == true;
+    }
+
+    public async Task<bool> EnableClientAsync(string clientIp)
+    {
+        if (Version != 6) return false;
+
+        var r = await V6Async(HttpMethod.Put, $"clients/{Uri.EscapeDataString(clientIp)}",
+            new { groups = new[] { 0 } }).ConfigureAwait(false);
+        return r?.IsSuccessStatusCode == true;
+    }
+
+    public void InvalidateAuth()
+    {
+        _ = LogoutV6Async();
+    }
+
+    public void Dispose()
+    {
+        try { LogoutV6Async().GetAwaiter().GetResult(); } catch { }
+        _client.Dispose();
+    }
 }
 
 record BlockedQuery(long Id, DateTime Time, string Domain, string ClientIp, string ClientName, string Status);

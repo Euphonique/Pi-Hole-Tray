@@ -39,6 +39,12 @@ class AppConfig
     [JsonPropertyName("language")]
     public string Language { get; set; } = "";
 
+    [JsonPropertyName("left_click_action")]
+    public string LeftClickAction { get; set; } = "toggle_global";
+
+    [JsonPropertyName("client_ip")]
+    public string ClientIp { get; set; } = "";
+
     // ── Legacy flat fields — only used during migration ───────────────────────
     [JsonPropertyName("pihole_url")]
     public string? LegacyUrl { get; set; }
